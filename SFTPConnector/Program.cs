@@ -1,11 +1,15 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
+using Amazon.S3;
+using Amazon.S3.Model;
 
 namespace SFTPConnector
 {
     class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             var builder = new ConfigurationBuilder()
                 .SetBasePath(Directory.GetCurrentDirectory())
@@ -13,15 +17,20 @@ namespace SFTPConnector
 
             IConfiguration config = builder.Build();
 
-            var localAssetConfiguration = config.GetSection("LocalAsset").Get<LocalAsset>();
+            var awsS3AssetConfiguration = config.GetSection("AWSS3Asset").Get<AWSS3Asset>();
             var remoteAssetConfiguration = config.GetSection("RemoteAsset").Get<RemoteAsset>();
+            
             var sftpService = new SFTPService(remoteAssetConfiguration.Host, remoteAssetConfiguration.Port, remoteAssetConfiguration.Username, remoteAssetConfiguration.Password);
 
-            string[] listFiles = FileBrowser.ListFiles(localAssetConfiguration.Directory);
-            
-            foreach (string fileName in listFiles)
+            var listObjectsResponse = await AWSS3Service.ListingObjectsAsync(awsS3AssetConfiguration.BucketName);
+
+            foreach (S3Object entry in listObjectsResponse.S3Objects)
             {
-                sftpService.UploadFile(fileName, remoteAssetConfiguration.Directory + fileName.Substring(fileName.LastIndexOf("/") + 1));
+                using (GetObjectResponse objectResponse = await AWSS3Service.GettingObjectAsync(awsS3AssetConfiguration.BucketName, entry.Key))
+                using (Stream responseStream = objectResponse.ResponseStream)
+                {
+                    sftpService.UploadFile(responseStream, remoteAssetConfiguration.Directory + entry.Key);
+                }
             }
         }
     }
@@ -29,6 +38,11 @@ namespace SFTPConnector
     public class LocalAsset
     {
         public string Directory { get; set; }
+    }
+
+    public class AWSS3Asset
+    {
+        public String BucketName { get; set; }
     }
 
     public class RemoteAsset
